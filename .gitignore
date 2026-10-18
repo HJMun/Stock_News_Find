@@ -1,0 +1,7 @@
+# 보안 키 파일
+gcp_key.json
+.env
+
+# 파이썬 임시 파일
+__pycache__/
+*.pyc
