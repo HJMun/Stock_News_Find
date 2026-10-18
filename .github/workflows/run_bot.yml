@@ -1,9 +1,8 @@
 name: Stock_News_Find Bot
 
 on:
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+  # 스케줄(cron) 및 push 조건을 모두 삭제하고 수동 실행만 남김
+  workflow_dispatch: 
 
 jobs:
   run-bot:
@@ -32,6 +31,5 @@ jobs:
       env:
         DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
         SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-        # ✨ 완료 폴더 ID 환경변수명을 OLD_FOLDER_ID로 변경
         OLD_FOLDER_ID: ${{ secrets.OLD_FOLDER_ID }}
       run: python News_Find_main.py
