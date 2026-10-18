@@ -1,5 +1,6 @@
 import os
 import io
+import re
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import google.auth
@@ -28,7 +29,6 @@ sheets_service = build('sheets', 'v4', credentials=credentials)
 # ==========================================
 DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "여기에_원본_폴더_ID_입력")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "여기에_시트_ID_입력")
-# ✨ 완료 폴더 변수명을 OLD_FOLDER_ID로 변경
 OLD_FOLDER_ID = os.environ.get("OLD_FOLDER_ID", "여기에_old_폴더_ID_입력")
 
 # Vertex AI LLM 초기화
@@ -79,9 +79,9 @@ def read_file_content(file_id, mime_type):
         return None
 
 def analyze_news_with_vertex(title, content):
-    """Vertex AI를 이용한 뉴스 및 증권사 리포트 심층 분석"""
+    """Vertex AI를 이용한 뉴스 및 증권사 리포트 심층 분석 (3개 항목 분리 반환)"""
     if not content or len(content) < 50:
-        return "내용이 너무 짧거나 파싱할 수 없는 포맷입니다."
+        return ["내용이 너무 짧거나 파싱할 수 없는 포맷입니다.", "-", "-"]
     
     safe_content = content[:50000] 
     
@@ -92,36 +92,137 @@ def analyze_news_with_vertex(title, content):
     [문서 제목]: {title}
     [문서 본문]: {safe_content}
     
-    다음 3가지 항목을 반드시 포함하여 작성해주세요:
-    1. 핵심 내용 요약: 문서의 주요 팩트 2~3줄 요약
-    2. 호재/악재 판별: 단기 및 중장기적 관점에서의 호재/악재/중립 여부와 그 근거 (리포트의 경우 목표가/투자의견 변경 사유 포함)
-    3. 재무 지표 및 실적 영향: 이 내용이 기업의 부채비율, PER, PBR, ROE 변화에 어떤 논리적 영향을 미칠지 서술하고, 향후 실적 추정치 조정의 모멘텀이 될 수 있는지 중점적으로 심층 분석할 것.
+    스프레드시트의 각 셀에 나누어 담을 수 있도록 반드시 아래의 구분자(===구분자1===, ===구분자2===, ===구분자3===)를 정확히 포함하여 작성해주세요.
+
+    ===구분자1===
+    [1. 핵심 내용 요약]
+    (문서의 주요 팩트 2~3줄 요약 작성)
+
+    ===구분자2===
+    [2. 호재/악재 판별]
+    (단기 및 중장기적 관점에서의 호재/악재/중립 여부와 그 근거, 목표가/투자의견 변경 사유 포함 작성)
+
+    ===구분자3===
+    [3. 재무 지표 및 실적 영향]
+    (이 내용이 기업의 부채비율, PER, PBR, ROE 변화에 어떤 논리적 영향을 미칠지 서술하고, 향후 실적 추정치 조정의 모멘텀이 될 수 있는지 중점적으로 심층 분석 작성)
     """
     
     try:
         response = llm.invoke([HumanMessage(content=prompt)])
-        return response.content.strip()
+        raw_text = response.content.strip()
+        
+        # 구분자를 기준으로 3개의 섹션으로 텍스트 분리
+        part1, part2, part3 = "", "", ""
+        if "===구분자1===" in raw_text and "===구분자2===" in raw_text and "===구분자3===" in raw_text:
+            temp1 = raw_text.split("===구분자1===")[1]
+            part1, temp2 = temp1.split("===구분자2===", 1)
+            part2, part3 = temp2.split("===구분자3===", 1)
+            return [part1.strip(), part2.strip(), part3.strip()]
+        else:
+            # 만약 AI가 구분자를 누락했을 경우 첫 번째 칸에 전체 텍스트를 넣고 나머지는 비움
+            return [raw_text, "-", "-"]
+            
     except Exception as e:
         print(f"Vertex AI 분석 에러: {e}")
-        return "AI 분석 실패"
+        return ["AI 분석 실패", "-", "-"]
 
-def append_to_spreadsheet(spreadsheet_id, data_row):
-    """스프레드시트에 분석 결과 추가"""
+def append_vertical_to_spreadsheet(spreadsheet_id, date_str, title, sections):
+    """
+    스프레드시트에 세로 3줄로 데이터를 추가하고 A열(날짜)과 B열(제목)을 각각 3칸씩 병합합니다.
+    - A1~A3 병합: 날짜
+    - B1~B3 병합: 보고서 제목
+    - C1: 핵심 내용 요약 / C2: 호재·악재 판별 / C3: 재무 지표 및 실적 영향
+    """
     try:
-        body = {'values': [data_row]}
-        sheets_service.spreadsheets().values().append(
+        # 1. 세로 3행(Row)으로 들어갈 데이터 구성
+        rows_to_add = [
+            [date_str, title, sections[0]],  # 1번째 줄: 날짜, 제목, 1. 핵심 내용 요약
+            ["", "", sections[1]],           # 2번째 줄: (병합될 빈칸), (병합될 빈칸), 2. 호재/악재 판별
+            ["", "", sections[2]]            # 3번째 줄: (병합될 빈칸), (병합될 빈칸), 3. 재무 지표 및 실적 영향
+        ]
+        
+        body = {'values': rows_to_add}
+        res = sheets_service.spreadsheets().values().append(
             spreadsheetId=spreadsheet_id,
             range="A1", 
             valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
             body=body
         ).execute()
+        
+        # 2. 방금 추가된 행 번호(Range) 파악하여 A열과 B열 3칸 병합하기
+        updated_range = res.get('updates', {}).get('updatedRange', '')
+        # 예: 'Sheet1!A4:C6' 형태에서 시작 행(4)과 끝 행(6) 추출
+        match = re.search(r'!A(\d+):[A-Z]+(\d+)', updated_range)
+        
+        if match:
+            start_row_idx = int(match.group(1)) - 1  # API는 0부터 시작하므로 -1
+            end_row_idx = int(match.group(2))        # 끝 인덱스는 포함되지 않으므로 그대로 사용
+            
+            # 첫 번째 시트의 고유 sheetId 가져오기
+            sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
+            
+            requests = [
+                # A열(0번 컬럼) 3칸 세로 병합 (날짜)
+                {
+                    "mergeCells": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row_idx,
+                            "endRowIndex": end_row_idx,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 1
+                        },
+                        "mergeType": "MERGE_ALL"
+                    }
+                },
+                # B열(1번 컬럼) 3칸 세로 병합 (보고서 제목)
+                {
+                    "mergeCells": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row_idx,
+                            "endRowIndex": end_row_idx,
+                            "startColumnIndex": 1,
+                            "endColumnIndex": 2
+                        },
+                        "mergeType": "MERGE_ALL"
+                    }
+                },
+                # 보기 편하도록 수직 가운데 정렬 및 텍스트 줄바꿈(WRAP) 적용
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row_idx,
+                            "endRowIndex": end_row_idx,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 3
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "verticalAlignment": "MIDDLE",
+                                "wrapStrategy": "WRAP"
+                            }
+                        },
+                        "fields": "userEnteredFormat(verticalAlignment,wrapStrategy)"
+                    }
+                }
+            ]
+            
+            sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": requests}
+            ).execute()
+            
         return True
     except Exception as e:
         print(f"스프레드시트 기록 에러: {e}")
         return False
 
 def move_file_to_old(file_id, current_parents, old_folder_id):
-    """✨ 파일을 분석 완료(old) 폴더로 자동 이동"""
+    """파일을 분석 완료(old) 폴더로 자동 이동"""
     try:
         previous_parents = ",".join(current_parents)
         drive_service.files().update(
@@ -156,15 +257,15 @@ def main():
         
         if content:
             print(f"  -> 🧠 AI 주식 심층 분석 진행 중...")
-            analysis_result = analyze_news_with_vertex(file_name, content)
+            # 3개의 리스트 항목으로 결과 받기 [요약, 호재/악재, 재무영향]
+            analysis_sections = analyze_news_with_vertex(file_name, content)
             
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-            data_row = [now_str, file_name, analysis_result]
             
-            print(f"  -> 💾 [Stock_News_Find] 스프레드시트에 결과 저장 중...")
-            is_saved = append_to_spreadsheet(SPREADSHEET_ID, data_row)
+            print(f"  -> 💾 [Stock_News_Find] 스프레드시트에 세로 3행 병합 저장 중...")
+            is_saved = append_vertical_to_spreadsheet(SPREADSHEET_ID, now_str, file_name, analysis_sections)
             
-            # ✨ 저장이 성공적으로 끝난 경우에만 파일 이동 실행
+            # 저장이 성공적으로 끝난 경우에만 파일 이동 실행
             if is_saved:
                 move_file_to_old(file_id, parents, OLD_FOLDER_ID)
         else:
