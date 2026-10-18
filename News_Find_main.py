@@ -33,7 +33,7 @@ OLD_FOLDER_ID = os.environ.get("OLD_FOLDER_ID", "여기에_old_폴더_ID_입력"
 
 # Vertex AI LLM 초기화
 llm = ChatVertexAI(
-    model_name="gemini-1.5-pro-002",
+    model_name="gemini-2.5-flash",
     location="us-central1",
     temperature=0.2
 )
