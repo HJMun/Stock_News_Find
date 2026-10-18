@@ -2,9 +2,8 @@ name: Stock_News_Find Bot
 
 on:
   schedule:
-    # 한국 시간 기준 매일 오전 9시 (UTC 기준 0시) 실행
     - cron: '0 0 * * *'
-  workflow_dispatch: # 수동 실행 버튼 활성화
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -14,7 +13,6 @@ jobs:
     - name: 저장소 코드 불러오기
       uses: actions/checkout@v3
 
-    # 구글 공식 인증 액션 (GitHub Secrets 값을 받아 안전하게 처리)
     - name: Google Cloud 인증
       uses: google-github-actions/auth@v2
       with:
@@ -34,4 +32,6 @@ jobs:
       env:
         DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
         SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        # ✨ 완료 폴더 ID 환경변수명을 OLD_FOLDER_ID로 변경
+        OLD_FOLDER_ID: ${{ secrets.OLD_FOLDER_ID }}
       run: python News_Find_main.py
